@@ -1,26 +1,28 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
-
-	"crypto/sha256"
-	"encoding/hex"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	_ "modernc.org/sqlite" // ✅ go-sqlite3 대신 사용
 )
 
-var jwtSecret = []byte("your-secret-key") // 💡 실제 배포에선 env로 분리
+var jwtSecret = []byte("your-secret-key")
+
 func generateToken(email string) (string, error) {
 	claims := jwt.MapClaims{
 		"email": email,
-		"exp":   time.Now().Add(time.Hour * 24).Unix(), // 24시간 유효
+		"exp":   time.Now().Add(time.Hour * 24).Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -54,8 +56,6 @@ type Post struct {
 	Author  string `json:"author"`
 }
 
-var postList []Post
-
 func hashPassword(pw string) string {
 	hash := sha256.Sum256([]byte(pw))
 	return hex.EncodeToString(hash[:])
@@ -66,8 +66,6 @@ func extractEmailFromToken(c *gin.Context) (string, error) {
 	if authHeader == "" {
 		return "", fmt.Errorf("토큰 없음")
 	}
-
-	// "Bearer ~~~" 형식 → 실제 토큰만 추출
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
 
 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
@@ -98,15 +96,12 @@ func initDatabase() {
 	if err != nil {
 		panic("DB 연결 실패: " + err.Error())
 	}
-
-	// 테이블 자동 생성
-	DB.AutoMigrate(&User{}) // ✅ 이 줄 추가
+	DB.AutoMigrate(&User{})
 	DB.AutoMigrate(&Post{})
 }
 
 func main() {
-
-	initDatabase() // 💡 DB 초기화 호출!
+	initDatabase()
 
 	r := gin.Default()
 
@@ -124,23 +119,19 @@ func main() {
 
 	r.POST("/signup", func(c *gin.Context) {
 		var user User
-
 		if err := c.ShouldBindJSON(&user); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "요청 형식 오류"})
 			return
 		}
 
-		// 이메일 중복 체크
 		var existing User
 		if err := DB.Where("email = ?", user.Email).First(&existing).Error; err == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "이미 가입된 아이디입니다"})
 			return
 		}
 
-		// 비밀번호 해싱
 		user.Password = hashPassword(user.Password)
 
-		// DB 저장
 		if err := DB.Create(&user).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "DB 저장 실패"})
 			return
@@ -151,26 +142,22 @@ func main() {
 
 	r.POST("/login", func(c *gin.Context) {
 		var loginData User
-
 		if err := c.ShouldBindJSON(&loginData); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "요청 형식 오류"})
 			return
 		}
 
-		// 사용자 조회
 		var user User
 		if err := DB.Where("email = ?", loginData.Email).First(&user).Error; err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "존재하지 않는 계정"})
 			return
 		}
 
-		// 비밀번호 비교
 		if user.Password != hashPassword(loginData.Password) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "비밀번호 불일치"})
 			return
 		}
 
-		// 토큰 생성
 		token, err := generateToken(user.Email)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "토큰 생성 실패"})
@@ -182,13 +169,11 @@ func main() {
 
 	r.POST("/posts", func(c *gin.Context) {
 		var post Post
-
 		if err := c.ShouldBindJSON(&post); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "요청 형식 오류"})
 			return
 		}
 
-		// ✅ 토큰에서 이메일 추출 → 작성자 저장
 		email, err := extractEmailFromToken(c)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "인증 실패: " + err.Error()})
@@ -197,7 +182,6 @@ func main() {
 
 		post.Author = email
 
-		// DB 저장
 		if err := DB.Create(&post).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "글 저장 실패"})
 			return
@@ -208,8 +192,6 @@ func main() {
 
 	r.GET("/posts", func(c *gin.Context) {
 		var posts []Post
-
-		// 🔄 최신순으로 정렬
 		if err := DB.Order("id desc").Find(&posts).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "DB 조회 실패"})
 			return
@@ -227,7 +209,6 @@ func main() {
 			return
 		}
 
-		// 글 존재 확인 후 수정
 		if err := DB.Model(&Post{}).Where("id = ?", id).
 			Updates(Post{Title: updated.Title, Content: updated.Content}).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "수정 실패"})
@@ -239,7 +220,6 @@ func main() {
 
 	r.DELETE("/posts/:id", func(c *gin.Context) {
 		id := c.Param("id")
-
 		if err := DB.Delete(&Post{}, id).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "삭제 실패"})
 			return
